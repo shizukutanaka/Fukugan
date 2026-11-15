@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fukugan — 3D Capture Control</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: system-ui, sans-serif; margin: 0; background: #101418; color: #e8ecef; }
+  header { display: flex; align-items: center; gap: 1rem; padding: 0.8rem 1.2rem; background: #171d24; }
+  header h1 { font-size: 1.2rem; margin: 0; }
+  header .spacer { flex: 1; }
+  button { background: #2563eb; color: #fff; border: 0; border-radius: 6px; padding: 0.5rem 1rem; cursor: pointer; font-size: 0.95rem; }
+  button.secondary { background: #374151; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  main { padding: 1rem 1.2rem; display: grid; gap: 1rem; max-width: 1100px; margin: 0 auto; }
+  .card { background: #171d24; border: 1px solid #26303c; border-radius: 8px; padding: 1rem; }
+  .card h2 { font-size: 1rem; margin: 0 0 0.6rem; }
+  #preview { width: 100%; background: #000; border-radius: 6px; aspect-ratio: 32/9; object-fit: contain; }
+  .state { font-weight: 700; }
+  .state.running { color: #4ade80; } .state.degraded { color: #facc15; }
+  .state.error { color: #f87171; } .state.idle, .state.starting { color: #9ca3af; }
+  ul.reasons { margin: 0.4rem 0 0; padding-left: 1.2rem; color: #fbbf24; }
+  .warn { background: #451a03; border: 1px solid #b45309; color: #fde68a; padding: 0.7rem 1rem; border-radius: 8px; }
+  code { background: #0b0f13; padding: 0.15rem 0.4rem; border-radius: 4px; word-break: break-all; }
+  label { display: inline-flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; margin-right: 0.8rem; }
+  input[type=number] { width: 5.5rem; padding: 0.35rem; border-radius: 4px; border: 1px solid #374151; background: #0b0f13; color: inherit; }
+  .row { display: flex; flex-wrap: wrap; align-items: end; gap: 0.6rem; }
+  table { border-collapse: collapse; font-size: 0.9rem; }
+  td, th { padding: 0.25rem 0.7rem 0.25rem 0; text-align: left; }
+  .muted { color: #9ca3af; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Fukugan</h1>
+  <span class="muted" data-i18n="tagline">複数カメラの立体映像を VR へ</span>
+  <div class="spacer"></div>
+  <button class="secondary" id="langBtn" type="button">EN</button>
+</header>
+<main>
+  <div class="warn" id="lanWarn" hidden data-i18n="lan_warn">
+    注意: このページは LAN に公開されています。認証はないため、同じネットワークの誰でも映像を見たり操作したりできます。
+  </div>
+
+  <section class="card">
+    <h2 data-i18n="status">状態</h2>
+    <div><span data-i18n="state">配信</span>: <span class="state idle" id="stateText">idle</span>
+      <span class="muted" id="encoderText"></span></div>
+    <ul class="reasons" id="reasons"></ul>
+    <div class="muted" id="statsText" style="margin-top:0.5rem"></div>
+    <div class="row" style="margin-top:0.8rem">
+      <button id="startBtn" type="button" data-i18n="start">配信開始</button>
+      <button id="stopBtn" class="secondary" type="button" data-i18n="stop">停止</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2 data-i18n="preview">プレビュー（合成結果）</h2>
+    <img id="preview" alt="preview">
+    <p class="muted" data-i18n="preview_note">プレビューは確認用です。本配信は下の HLS アドレスをヘッドセットで開いてください。</p>
+  </section>
+
+  <section class="card">
+    <h2 data-i18n="watch">ヘッドセットで見る</h2>
+    <p><span data-i18n="hls_url">HLS アドレス</span>: <code id="hlsUrl"></code></p>
+    <p class="muted" data-i18n="watch_note">Quest 等のブラウザ/プレイヤーで開き、side-by-side（左右並列）表示に設定すると立体視できます。外部の MediaMTX を設定した場合はそちらのアドレスを使ってください。</p>
+  </section>
+
+  <section class="card">
+    <h2 data-i18n="cameras">カメラ</h2>
+    <table id="camTable"><thead><tr>
+      <th data-i18n="col_index">#</th><th data-i18n="col_type">種別</th>
+      <th data-i18n="col_label">ラベル</th><th data-i18n="col_role">役割</th>
+    </tr></thead><tbody></tbody></table>
+    <p class="muted" id="detectedText"></p>
+  </section>
+
+  <section class="card">
+    <h2 data-i18n="alignment">手動位置合わせ（ピクセル）</h2>
+    <div class="row">
+      <label><span data-i18n="left_x">左 X</span><input type="number" id="left_x" value="0"></label>
+      <label><span data-i18n="left_y">左 Y</span><input type="number" id="left_y" value="0"></label>
+      <label><span data-i18n="right_x">右 X</span><input type="number" id="right_x" value="0"></label>
+      <label><span data-i18n="right_y">右 Y</span><input type="number" id="right_y" value="0"></label>
+      <button id="alignBtn" class="secondary" type="button" data-i18n="apply">適用</button>
+    </div>
+    <p class="muted" data-i18n="align_note">適用は次回の配信開始時に反映されます。縦方向のずれを先に消すのがコツです。</p>
+    <p class="muted" id="alignMsg"></p>
+  </section>
+</main>
+
+<script>
+const I18N = {
+  ja: {
+    tagline: "複数カメラの立体映像を VR へ", status: "状態", state: "配信",
+    start: "配信開始", stop: "停止", preview: "プレビュー（合成結果）",
+    preview_note: "プレビューは確認用です。本配信は下の HLS アドレスをヘッドセットで開いてください。",
+    watch: "ヘッドセットで見る", hls_url: "HLS アドレス",
+    watch_note: "Quest 等のブラウザ/プレイヤーで開き、side-by-side（左右並列）表示に設定すると立体視できます。外部の MediaMTX を設定した場合はそちらのアドレスを使ってください。",
+    cameras: "カメラ", col_index: "#", col_type: "種別", col_label: "ラベル", col_role: "役割",
+    alignment: "手動位置合わせ（ピクセル）", left_x: "左 X", left_y: "左 Y",
+    right_x: "右 X", right_y: "右 Y", apply: "適用",
+    align_note: "適用は次回の配信開始時に反映されます。縦方向のずれを先に消すのがコツです。",
+    lan_warn: "注意: このページは LAN に公開されています。認証はないため、同じネットワークの誰でも映像を見たり操作したりできます。",
+    role_left: "左眼", role_right: "右眼", role_center: "中央（同期基準）", role_spare: "予備",
+    detected: "検出されたデバイス番号: ", frames: "合成フレーム数",
+    encoder: "エンコーダ", uptime: "稼働秒数", applied: "保存しました（次回開始時に反映）",
+  },
+  en: {
+    tagline: "Stereo capture from multiple webcams, streamed to VR",
+    status: "Status", state: "Stream",
+    start: "Start streaming", stop: "Stop", preview: "Preview (composed)",
+    preview_note: "The preview is for checking only. Open the HLS URL below on your headset for the real stream.",
+    watch: "Watch on a headset", hls_url: "HLS URL",
+    watch_note: "Open it in the Quest browser/player and select side-by-side mode for stereo viewing. If you configured an external MediaMTX, use its URL instead.",
+    cameras: "Cameras", col_index: "#", col_type: "Type", col_label: "Label", col_role: "Role",
+    alignment: "Manual alignment (pixels)", left_x: "Left X", left_y: "Left Y",
+    right_x: "Right X", right_y: "Right Y", apply: "Apply",
+    align_note: "Applied the next time the stream starts. Fix vertical offset first.",
+    lan_warn: "Warning: this page is exposed on your LAN. There is no authentication, so anyone on the same network can view the stream and control the app.",
+    role_left: "Left eye", role_right: "Right eye", role_center: "Center (sync reference)", role_spare: "Spare",
+    detected: "Detected device indices: ", frames: "frames composed",
+    encoder: "encoder", uptime: "uptime (s)", applied: "Saved (applies on next start)",
+  },
+};
+let lang = localStorage.getItem("fukugan-lang") || "ja";
+let pair = [0, 1], reference = 0;
+
+function applyLang() {
+  document.documentElement.lang = lang;
+  document.querySelectorAll("[data-i18n]").forEach(el => {
+    const key = el.getAttribute("data-i18n");
+    if (I18N[lang][key]) el.textContent = I18N[lang][key];
+  });
+  document.getElementById("langBtn").textContent = lang === "ja" ? "EN" : "日本語";
+}
+document.getElementById("langBtn").addEventListener("click", () => {
+  lang = lang === "ja" ? "en" : "ja";
+  localStorage.setItem("fukugan-lang", lang);
+  applyLang(); renderCameras(lastCameras);
+});
+
+if (!["127.0.0.1", "localhost"].includes(location.hostname)) {
+  document.getElementById("lanWarn").hidden = false;
+}
+document.getElementById("hlsUrl").textContent =
+  location.origin + "/hls/index.m3u8";
+document.getElementById("preview").src = "/preview.mjpg";
+
+let lastCameras = [];
+function renderCameras(cams) {
+  lastCameras = cams || lastCameras;
+  const tbody = document.querySelector("#camTable tbody");
+  tbody.innerHTML = "";
+  lastCameras.forEach((c, i) => {
+    const tr = document.createElement("tr");
+    let role = I18N[lang].role_spare;
+    if (i === pair[0]) role = I18N[lang].role_left;
+    else if (i === pair[1]) role = I18N[lang].role_right;
+    else if (i === reference) role = I18N[lang].role_center;
+    [String(i), c.type, c.label || "", role].forEach(text => {
+      const td = document.createElement("td");
+      td.textContent = text; tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+}
+
+async function refresh() {
+  try {
+    const st = await (await fetch("/api/status")).json();
+    const stateEl = document.getElementById("stateText");
+    stateEl.textContent = st.state;
+    stateEl.className = "state " + st.state;
+    pair = st.pair; reference = st.reference;
+    document.getElementById("encoderText").textContent = st.encoder
+      ? ` / ${I18N[lang].encoder}: ${st.encoder.codec}${st.encoder.hardware ? " (HW)" : ""} / ${I18N[lang].uptime}: ${st.uptime_seconds}`
+      : "";
+    const ul = document.getElementById("reasons");
+    ul.innerHTML = "";
+    (st.reasons || []).forEach(r => {
+      const li = document.createElement("li");
+      li.textContent = r; ul.appendChild(li);
+    });
+    document.getElementById("statsText").textContent =
+      `${I18N[lang].frames}: ${st.stats.frames_composed}`;
+    renderCameras(st.cameras.map(c => ({ type: c.type, label: c.label })));
+    document.getElementById("startBtn").disabled =
+      ["starting", "running", "degraded"].includes(st.state);
+  } catch (e) { /* server unreachable; keep last display */ }
+}
+setInterval(refresh, 1500);
+
+fetch("/api/cameras").then(r => r.json()).then(data => {
+  document.getElementById("detectedText").textContent =
+    I18N[lang].detected + (data.detected_devices.join(", ") || "-");
+}).catch(() => {});
+
+document.getElementById("startBtn").addEventListener("click", async () => {
+  await fetch("/api/start", { method: "POST" }); refresh();
+});
+document.getElementById("stopBtn").addEventListener("click", async () => {
+  await fetch("/api/stop", { method: "POST" }); refresh();
+});
+document.getElementById("alignBtn").addEventListener("click", async () => {
+  const body = {};
+  ["left_x", "left_y", "right_x", "right_y"].forEach(k => {
+    body[k] = parseInt(document.getElementById(k).value || "0", 10);
+  });
+  const res = await fetch("/api/alignment", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (res.ok) document.getElementById("alignMsg").textContent = I18N[lang].applied;
+});
+
+applyLang();
+refresh();
+</script>
+</body>
+</html>
