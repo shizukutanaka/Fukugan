@@ -97,6 +97,7 @@ const I18N = {
     start: "配信開始", stop: "停止", preview: "プレビュー（合成結果）",
     preview_note: "プレビューは確認用です。本配信は下の HLS アドレスをヘッドセットで開いてください。",
     watch: "ヘッドセットで見る", hls_url: "HLS アドレス",
+    hls_local_only: "この端末の中からしか開けません。ヘッドセットで見るには --host 0.0.0.0 を付けて起動し直してください。",
     watch_note: "Quest 等のブラウザ/プレイヤーで開き、side-by-side（左右並列）表示に設定すると立体視できます。外部の MediaMTX を設定した場合はそちらのアドレスを使ってください。",
     cameras: "カメラ", col_index: "#", col_type: "種別", col_label: "ラベル", col_role: "役割",
     alignment: "手動位置合わせ（ピクセル）", left_x: "左 X", left_y: "左 Y",
@@ -113,6 +114,7 @@ const I18N = {
     start: "Start streaming", stop: "Stop", preview: "Preview (composed)",
     preview_note: "The preview is for checking only. Open the HLS URL below on your headset for the real stream.",
     watch: "Watch on a headset", hls_url: "HLS URL",
+    hls_local_only: "Only reachable from this machine. Restart with --host 0.0.0.0 to watch on a headset.",
     watch_note: "Open it in the Quest browser/player and select side-by-side mode for stereo viewing. If you configured an external MediaMTX, use its URL instead.",
     cameras: "Cameras", col_index: "#", col_type: "Type", col_label: "Label", col_role: "Role",
     alignment: "Manual alignment (pixels)", left_x: "Left X", left_y: "Left Y",
@@ -144,8 +146,6 @@ document.getElementById("langBtn").addEventListener("click", () => {
 if (!["127.0.0.1", "localhost"].includes(location.hostname)) {
   document.getElementById("lanWarn").hidden = false;
 }
-document.getElementById("hlsUrl").textContent =
-  location.origin + "/hls/index.m3u8";
 document.getElementById("preview").src = "/preview.mjpg";
 
 let lastCameras = [];
@@ -174,6 +174,8 @@ async function refresh() {
     stateEl.textContent = st.state;
     stateEl.className = "state " + st.state;
     pair = st.pair; reference = st.reference;
+    document.getElementById("hlsUrl").textContent =
+      (st.headset_urls || []).join("  ") || I18N[lang].hls_local_only;
     document.getElementById("encoderText").textContent = st.encoder
       ? ` / ${I18N[lang].encoder}: ${st.encoder.codec}${st.encoder.hardware ? " (HW)" : ""} / ${I18N[lang].uptime}: ${st.uptime_seconds}`
       : "";

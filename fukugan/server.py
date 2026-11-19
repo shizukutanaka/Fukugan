@@ -5,6 +5,7 @@ Endpoints:
     /hls/...         HLS playlist and segments written by FFmpeg
     /preview.mjpg    MJPEG preview of the composed frame
     /api/status      pipeline status JSON (state + reasons, always honest)
+                     plus `headset_urls`: HLS URLs reachable from the LAN
     /api/cameras     configured cameras + detected device indices
     /api/start       POST: start the pipeline
     /api/stop        POST: stop the pipeline
@@ -19,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -30,6 +32,38 @@ from .config import Config
 from .pipeline import Pipeline
 
 WEBUI_PATH = os.path.join(os.path.dirname(__file__), "webui", "index.html")
+LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
+WILDCARD_HOSTS = ("0.0.0.0", "")
+
+
+def lan_address() -> str | None:
+    """The IPv4 address this machine uses on its LAN, or None.
+
+    A UDP connect only selects a route; no packet leaves the machine.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        try:
+            sock.connect(("10.254.254.254", 1))
+            address = sock.getsockname()[0]
+        except OSError:
+            return None
+    return None if address.startswith("127.") else address
+
+
+def headset_urls(host: str, port: int) -> list[str]:
+    """HLS URLs a headset on the same network can open.
+
+    Empty when the server is bound to loopback: nothing off this machine
+    can reach it, so showing a 127.0.0.1 URL for a headset would mislead.
+    """
+    if host in LOOPBACK_HOSTS:
+        return []
+    if host in WILDCARD_HOSTS:
+        address = lan_address()
+        hosts = [address] if address else []
+    else:
+        hosts = [host]
+    return [f"http://{h}:{port}/hls/index.m3u8" for h in hosts]
 
 
 def list_device_cameras(max_index: int = 10) -> list[int]:
@@ -91,7 +125,8 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             self._send(200, body, "text/html; charset=utf-8")
         elif path == "/api/status":
-            self._json(200, self.app.pipeline.status())
+            self._json(200, {**self.app.pipeline.status(),
+                             "headset_urls": self.app.headset_urls()})
         elif path == "/api/cameras":
             cfg = self.app.pipeline.cfg
             self._json(200, {
@@ -199,6 +234,10 @@ class AppServer:
     def address(self) -> tuple[str, int]:
         return self._httpd.server_address[:2]
 
+    def headset_urls(self) -> list[str]:
+        host, port = self.address
+        return headset_urls(host, port)
+
     def start_loop(self) -> None:
         if self._loop_thread and self._loop_thread.is_alive():
             return
@@ -215,7 +254,16 @@ class AppServer:
     def serve_forever(self) -> None:
         host, port = self.address
         print(f"Fukugan UI: http://{host}:{port}/")
-        if host not in ("127.0.0.1", "localhost"):
+        urls = self.headset_urls()
+        for url in urls:
+            print(f"Open on the headset: {url}")
+        if not urls:
+            print(
+                "Headset viewing: this address is not reachable from other "
+                "devices; restart with --host 0.0.0.0 to stream to a headset "
+                "on the same network."
+            )
+        if host not in LOOPBACK_HOSTS:
             print(
                 "WARNING: bound to a non-local address with no "
                 "authentication; anyone on this network can view the "
