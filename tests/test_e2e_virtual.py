@@ -117,6 +117,8 @@ def test_status_reports_running_with_encoder_reason(running_server):
     # The encoder choice always carries its reason.
     assert status["encoder"]["reason"]
     assert status["stats"]["frames_written"] > 0
+    # Bound to loopback: no URL a headset could not actually open.
+    assert status["headset_urls"] == []
 
 
 def test_ui_is_served(running_server):
